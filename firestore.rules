@@ -1,0 +1,42 @@
+rules_version = '2';
+// フォロールート用の Firestore セキュリティルール
+// 使い方：Firebase コンソール → Firestore Database → ルール に貼り付けて「公開」
+//   ・「svenson.co.jp」のGoogleアカウントでログインした人だけが読み書きできます
+//   ・ポイントのルールなどの設定（config）は編集者だけが変更できます
+//   ・編集者は下の isAdmin() のメール一覧で決まります（画面側は admin/probe を読めるかで判定）
+//   ・対応記録（logs）は本人の名前でだけ作成・取り消しができます
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.matches('.*@svenson[.]co[.]jp$');
+    }
+    function isAdmin() {
+      // ↓ 編集者のメールアドレス（複数可）
+      return signedIn() && request.auth.token.email in ['your.name@svenson.co.jp'];
+    }
+    match /admin/{doc} {
+      allow read, write: if isAdmin();
+    }
+    match /config/{doc} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow write: if signedIn() && request.auth.uid == uid;
+    }
+    match /logs/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.by == request.auth.uid;
+      allow delete: if signedIn() && resource.data.by == request.auth.uid;
+    }
+    // 店舗マスタ・販売データ・ラウンド実績・取込履歴など
+    // （Firestore はマッチした規則のどれか1つでも許可すると通るため、上の4つは除外する）
+    match /{collection}/{doc} {
+      allow read: if signedIn() && collection != 'admin';
+      allow write: if signedIn() && !(collection in ['admin', 'config', 'users', 'logs']);
+    }
+  }
+}

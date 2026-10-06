@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>SVENSON ルートマップ</title>
+<style>
+/* ===== 設定 =====
+   空欄のままでも、Googleマップの埋め込み（キー不要）でルート全体と各区間を表示します。
+   GOOGLE_MAPS_API_KEY に Google Maps JavaScript API のキーを入れると、
+   優先度の色付き番号ピンと吹き出しのある地図に切り替わります。 */
+:root{
+  --bg:#f3f0ea; --surface:#fff; --surface2:#f8f6f1; --line:#e6dfd2; --ink:#1d2126; --ink2:#535a61; --muted:#7f858b;
+  --gold:#94733a; --gold-ink:#6c5122; --gold-lt:#f1e8d7; --side:#1b2127;
+  --hi:#c93a3a; --mid:#cf7a22; --lo:#2f8a5c; --route:#2f63c9;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#13171b; --surface:#1b2025; --surface2:#21272d; --line:#2f363d; --ink:#ebe8e2; --ink2:#b4b8bc; --muted:#8c9196;
+  --gold:#c7a263; --gold-ink:#dcbc80; --gold-lt:#2d261a; --side:#0e1114; --route:#6d97e8; color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font-family:"Noto Sans JP",system-ui,-apple-system,"Hiragino Sans","Yu Gothic UI",sans-serif;font-size:14px;line-height:1.5}
+header{background:var(--side);color:#fff;padding:10px 16px;padding-top:calc(10px + env(safe-area-inset-top,0px));display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+header .logo{font-family:"Times New Roman",serif;font-size:22px;letter-spacing:.08em}
+header .t{font-weight:700}
+header .s{font-size:12px;opacity:.75}
+.app{display:grid;grid-template-columns:minmax(300px,380px) 1fr;height:calc(100% - 52px)}
+aside{overflow-y:auto;border-right:1px solid var(--line);background:var(--surface)}
+#map,#frame{width:100%;height:100%;border:0;background:var(--surface2)}
+.stop{display:grid;grid-template-columns:30px 1fr;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+.stop:hover,.stop.on{background:var(--gold-lt)}
+.n{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:700;font-size:13px}
+.n.高{background:var(--hi)}.n.中{background:var(--mid)}.n.低{background:var(--lo)}
+.nm{font-weight:700}
+.tm{font-variant-numeric:tabular-nums;color:var(--gold-ink);font-weight:700;margin-right:6px}
+.small{font-size:12px;color:var(--ink2)}
+.leg{font-size:12px;color:var(--ink2);margin-top:4px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.btn{display:inline-flex;align-items:center;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;padding:5px 10px;font-size:12px;text-decoration:none;cursor:pointer}
+.btn.gold{background:var(--gold);border-color:var(--gold);color:#fff;font-weight:700}
+.note{padding:12px 14px;font-size:12px;color:var(--ink2);background:var(--surface2);border-bottom:1px solid var(--line)}
+.err{padding:24px;color:var(--ink2)}
+.tools{padding:10px 14px;display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+@media (max-width:760px){
+  .app{grid-template-columns:1fr;grid-template-rows:46vh 1fr;height:auto;min-height:calc(100% - 52px)}
+  aside{border-right:0;border-top:1px solid var(--line);order:2}
+  #mapWrap{order:1;height:46vh}
+}
+</style>
+</head>
+<body>
+<header><span class="logo">SVENSON</span><span class="t" id="title">ルートマップ</span><span class="s" id="sub"></span></header>
+<div class="app">
+  <aside id="list"></aside>
+  <div id="mapWrap"></div>
+</div>
+<script>
+const GOOGLE_MAPS_API_KEY = "";   // ← ここにAPIキー（HTTPリファラーでこのページのURLに制限してください）
+
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function readRoute(){
+  // ダッシュボードから #r=<base64url(JSON)> で受け取る（# 以降はサーバーに送信されません）
+  const m=location.hash.match(/[#&]r=([A-Za-z0-9_-]+)/);
+  if(!m)return null;
+  try{const b=atob(m[1].replace(/-/g,'+').replace(/_/g,'/'));const bytes=Uint8Array.from(b,c=>c.charCodeAt(0));return JSON.parse(new TextDecoder().decode(bytes))}catch(e){return null}
+}
+const R=readRoute();
+const list=document.getElementById('list'),wrap=document.getElementById('mapWrap');
+if(!R||!Array.isArray(R.s)||!R.s.length){
+  list.innerHTML='<p class="err">ルートが指定されていません。ダッシュボードの「Googleマップ（埋め込み）で見る」から開いてください。</p>';
+}else{
+  document.getElementById('title').textContent=R.t||'ルートマップ';
+  document.getElementById('sub').textContent=`${R.s.length}店・${R.m==='train'?'電車':'車'}`;
+  const gm=s=>`https://www.google.com/maps/search/?api=1&query=${s.ll.join(',')}`;
+  const dir=(a,b)=>`https://www.google.com/maps/dir/?api=1&travelmode=${R.m==='train'?'transit':'driving'}&destination=${b.ll.join(',')}`+(a?`&origin=${a.ll.join(',')}`:'');
+  const ekitan=(f,t)=>'https://ekitan.com/transit/route?stname='+encodeURIComponent(t)+(f?'&sfname='+encodeURIComponent(f):'')+(R.dt?'&dt='+R.dt:'');
+  list.innerHTML=(GOOGLE_MAPS_API_KEY?'':'<div class="note">APIキー未設定のため、選んだ店舗の位置を1件ずつ表示しています。キーを設定するとルート全体を表示します。</div>')
+    +(GOOGLE_MAPS_API_KEY?'<div class="tools"><button class="btn" id="roadBtn" type="button">道路ルートを表示</button><button class="btn" id="fitBtn" type="button">全体を表示</button></div>':'')
+    +R.s.map((s,i)=>`<div class="stop" data-i="${i}"><span class="n ${esc(s.pr)}">${i+1}</span><div>
+      <div><span class="tm">${esc(s.tm)}</span><span class="nm">${esc(s.n)}</span></div>
+      <div class="small">${esc(s.act||'')}</div>
+      <div class="small">${esc(s.a||'')}</div>
+      ${s.leg?`<div class="leg">${esc(s.leg)}</div>`:''}
+      <div class="btns"><a class="btn gold" href="${dir(i?R.s[i-1]:null,s)}" target="_blank" rel="noopener">${i?'前の店から道順':'ここへの道順'}</a>
+        <a class="btn" href="${gm(s)}" target="_blank" rel="noopener">Googleマップで開く</a>
+        ${s.st?`<a class="btn" href="${ekitan(i&&R.s[i-1].st?R.s[i-1].st:'',s.st)}" target="_blank" rel="noopener">駅探</a>`:''}</div>
+    </div></div>`).join('');
+  const stops=[...list.querySelectorAll('.stop')];
+  const select=i=>{stops.forEach(x=>x.classList.toggle('on',+x.dataset.i===i));if(window.focusStop)window.focusStop(i)};
+  stops.forEach(x=>x.addEventListener('click',e=>{if(e.target.closest('a'))return;select(+x.dataset.i)}));
+
+  if(!GOOGLE_MAPS_API_KEY){
+    // キー不要の埋め込み：最初はルート全体（道路ルート）、店舗を選ぶと「前の店→この店」の区間を表示
+    wrap.innerHTML='<iframe id="frame" referrerpolicy="no-referrer-when-downgrade" title="Googleマップ"></iframe>';
+    const fr=document.getElementById('frame'),ll=s=>s.ll.join(',');
+    const showAll=()=>{stops.forEach(x=>x.classList.remove('on'));
+      fr.src=R.s.length>1?`https://maps.google.com/maps?saddr=${ll(R.s[0])}&daddr=${R.s.slice(1).map(ll).join('+to:')}&dirflg=d&hl=ja&output=embed`
+        :`https://maps.google.com/maps?q=${ll(R.s[0])}&z=16&hl=ja&output=embed`};
+    window.focusStop=i=>{const s=R.s[i];
+      fr.src=i?`https://maps.google.com/maps?saddr=${ll(R.s[i-1])}&daddr=${ll(s)}&dirflg=${R.m==='train'?'r':'d'}&hl=ja&output=embed`
+        :`https://maps.google.com/maps?q=${ll(s)}&z=16&hl=ja&output=embed`};
+    list.querySelector('.note').outerHTML='<div class="tools"><button class="btn gold" id="allBtn" type="button">ルート全体を表示</button><span class="small" style="align-self:center">店舗を選ぶと、前の店からの区間を表示します'+(R.m==='train'?'（電車の経路）':'')+'</span></div>';
+    document.getElementById('allBtn').onclick=showAll;
+    showAll();
+  }else{
+    wrap.innerHTML='<div id="map"></div>';
+    window.initMap=()=>{
+      const colors={高:'#c93a3a',中:'#cf7a22',低:'#2f8a5c'};
+      const map=new google.maps.Map(document.getElementById('map'),{mapTypeControl:false,streetViewControl:false,fullscreenControl:true,gestureHandling:'greedy'});
+      const bounds=new google.maps.LatLngBounds(),info=new google.maps.InfoWindow();
+      const markers=R.s.map((s,i)=>{
+        const pos={lat:s.ll[0],lng:s.ll[1]};bounds.extend(pos);
+        const mk=new google.maps.Marker({position:pos,map,label:{text:String(i+1),color:'#fff',fontWeight:'700'},title:s.n,
+          icon:{path:google.maps.SymbolPath.CIRCLE,scale:13,fillColor:colors[s.pr]||'#2f63c9',fillOpacity:1,strokeColor:'#fff',strokeWeight:2}});
+        mk.addListener('click',()=>select(i));
+        return mk;
+      });
+      const line=new google.maps.Polyline({path:R.s.map(s=>({lat:s.ll[0],lng:s.ll[1]})),map,strokeColor:'#2f63c9',strokeOpacity:.8,strokeWeight:3});
+      map.fitBounds(bounds,48);
+      window.focusStop=i=>{const s=R.s[i];info.setContent(`<b>${esc(i+1+'. '+s.n)}</b><br>${esc(s.tm)}　${esc(s.act||'')}<br><span style="font-size:12px">${esc(s.a||'')}</span>`);info.open({map,anchor:markers[i]});map.panTo(markers[i].getPosition())};
+      document.getElementById('fitBtn').onclick=()=>{info.close();map.fitBounds(bounds,48)};
+      let road=null;
+      document.getElementById('roadBtn').onclick=async e=>{
+        if(road){road.setMap(null);road=null;line.setMap(map);e.target.textContent='道路ルートを表示';return}
+        if(R.s.length<2)return;
+        const svc=new google.maps.DirectionsService();
+        try{
+          const res=await svc.route({origin:{lat:R.s[0].ll[0],lng:R.s[0].ll[1]},destination:{lat:R.s.at(-1).ll[0],lng:R.s.at(-1).ll[1]},
+            waypoints:R.s.slice(1,-1).map(s=>({location:{lat:s.ll[0],lng:s.ll[1]},stopover:true})),travelMode:google.maps.TravelMode.DRIVING});
+          road=new google.maps.DirectionsRenderer({map,directions:res,suppressMarkers:true,preserveViewport:true,polylineOptions:{strokeColor:'#2f63c9',strokeWeight:5,strokeOpacity:.85}});
+          line.setMap(null);e.target.textContent='直線表示に戻す';
+        }catch(err){alert('道路ルートを取得できませんでした（Directions APIが有効か確認してください）')}
+      };
+    };
+    const sc=document.createElement('script');
+    sc.src=`https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GOOGLE_MAPS_API_KEY)}&callback=initMap&language=ja&region=JP&v=weekly`;
+    sc.async=true;sc.onerror=()=>{wrap.innerHTML='<p class="err">Googleマップを読み込めませんでした。APIキーとリファラー制限を確認してください。</p>'};
+    document.head.appendChild(sc);
+  }
+}
+</script>
+</body>
+</html>
